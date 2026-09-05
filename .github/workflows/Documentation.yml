@@ -1,0 +1,39 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - main
+    tags: ['*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # Skip intermediate builds: always.
+  # Cancel intermediate builds: only if it is a pull request build.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+jobs:
+  docs:
+    name: Build & deploy docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: write   # julia-actions/cache: prune old caches it created
+      contents: write  # deploydocs: push the rendered site to the gh-pages branch
+      pull-requests: read
+      statuses: write  # deploydocs: report the docs preview status on PRs
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - uses: julia-actions/julia-docdeploy@v1
+        env:
+          # Authenticates the push to gh-pages. GITHUB_TOKEN is provided
+          # automatically; DOCUMENTER_KEY (an optional SSH deploy key) is used
+          # instead when configured as a repository secret.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCUMENTER_KEY: ${{ secrets.DOCUMENTER_KEY }}

@@ -1,5 +1,7 @@
 # CookieMonster
 
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://JBlaschke.github.io/CookieMonster.jl/stable/)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://JBlaschke.github.io/CookieMonster.jl/dev/)
 [![Build Status](https://github.com/JBlaschke/CookieMonster.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/JBlaschke/CookieMonster.jl/actions/workflows/CI.yml?query=branch%3Amain)
 
 CookieMonster reads and decrypts the cookies stored by Chromium-based browsers
@@ -19,6 +21,15 @@ The package exposes a single function, `read_cookies`.
 > Reading the key may prompt for keyring access (a Keychain dialog on
 > macOS) the first time. CookieMonster only decrypts cookies belonging to the
 > current user; use it on your own machine and profiles.
+
+## Documentation
+
+- [**Stable docs**](https://JBlaschke.github.io/CookieMonster.jl/stable/) — for the
+  latest tagged release.
+- [**Dev docs**](https://JBlaschke.github.io/CookieMonster.jl/dev/) — built from `main`.
+
+The [API reference](https://JBlaschke.github.io/CookieMonster.jl/dev/api/) documents
+`read_cookies` and the internal helpers in full.
 
 ## Usage
 
