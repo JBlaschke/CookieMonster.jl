@@ -80,7 +80,6 @@ function derive_keys(browser::AbstractString)
             v11 = nothing
         )
     else
-        salt = 
         v10 = pbkdf2_hmac_sha1(LINUX_V10_PW, SALT, 1, 16)
         app = SERVICE_TYPE[browser]
         v11 = try
