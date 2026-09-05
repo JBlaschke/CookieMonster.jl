@@ -15,18 +15,10 @@ snapshot, write-ahead log included).
 
 The package exposes a single function, `read_cookies`.
 
-> **Note:** Reading the key may prompt for keyring access (a Keychain dialog on
+>[!WARNING]
+> Reading the key may prompt for keyring access (a Keychain dialog on
 > macOS) the first time. CookieMonster only decrypts cookies belonging to the
 > current user; use it on your own machine and profiles.
-
-## Installation
-
-```julia
-using Pkg
-Pkg.add(url = "https://github.com/JBlaschke/CookieMonster.jl")
-```
-
-Requires Julia 1.10 or newer.
 
 ## Usage
 
