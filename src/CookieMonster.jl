@@ -1,3 +1,16 @@
+"""
+    CookieMonster
+
+Read and decrypt cookies from Chromium-based browsers (Chrome, Chromium, Brave)
+on macOS and Linux.
+
+The browser stores its cookies in an SQLite database, with each cookie value
+encrypted using AES-128-CBC. The encryption key is derived (via PBKDF2-HMAC-SHA1)
+from a per-browser "Safe Storage" password held in the OS keyring — the macOS
+Keychain, or a Linux Secret Service keyring — with a well-known fallback on Linux.
+
+The single exported entry point is `read_cookies`.
+"""
 module CookieMonster
 
 using SQLite, DBInterface, Nettle, Dates
@@ -6,9 +19,21 @@ const IV16 = fill(0x20, 16)  # 16 space bytes, NOT zeros
 const SALT = Vector{UInt8}("saltysalt")
 
 #______________________________________________________________________________
-# PBKDF2-HMAC-SHA1, single block (dklen 16 <= 20, so one block suffices)
-#
+"""
+    pbkdf2_hmac_sha1(pw, salt, iters, dklen) -> Vector{UInt8}
 
+Derive a `dklen`-byte key from password `pw` and `salt` using PBKDF2 with
+HMAC-SHA1 as the pseudo-random function and `iters` iterations.
+
+Only a single output block is supported, so `dklen` must be `<= 20` (the SHA-1
+digest length); this is sufficient for the 16-byte AES keys used here.
+
+# Arguments
+- `pw::Vector{UInt8}`: the password / master key bytes.
+- `salt::Vector{UInt8}`: the salt bytes.
+- `iters::Integer`: the number of PBKDF2 iterations.
+- `dklen::Integer`: the desired key length in bytes (`<= 20`).
+"""
 function pbkdf2_hmac_sha1(
             pw::Vector{UInt8},
             salt::Vector{UInt8},
@@ -35,8 +60,7 @@ function pbkdf2_hmac_sha1(
 end
 
 #______________________________________________________________________________
-# Per-platform key derivation.
-# Returns (v10=..., v11=...) ; nothing = unavailable
+# Per-platform key derivation, keyring service names, and cookie DB locations.
 #
 
 h = homedir()
@@ -69,6 +93,23 @@ end
 
 const LINUX_V10_PW = Vector{UInt8}("peanuts")
 
+"""
+    derive_keys(browser) -> NamedTuple
+
+Derive the AES-128 keys used to decrypt `browser`'s cookies, returned as a named
+tuple `(v10 = ..., v11 = ...)`. Each field is a 16-byte key, or `nothing` when
+that key scheme is unavailable on the current platform.
+
+On macOS, the browser's "Safe Storage" password is read from the login Keychain
+(prompting the user once) and stretched with 1003 PBKDF2 iterations into the
+`v10` key; `v11` is unused (`nothing`).
+
+On Linux, `v10` is derived from the well-known fallback password `"peanuts"`
+(1 iteration), and `v11` is derived from the Secret Service password looked up
+via `secret-tool`, or `nothing` when no keyring / `secret-tool` is available.
+
+`browser` must be one of `"chrome"`, `"chromium"`, or `"brave"`.
+"""
 function derive_keys(browser::AbstractString)
     if Sys.isapple()
         service = SERVICE_TYPE[browser]
@@ -92,6 +133,16 @@ function derive_keys(browser::AbstractString)
     end
 end
 
+"""
+    cookie_db_path(browser; profile = "Default", base = nothing) -> String
+
+Return the path to the Cookies SQLite database for `browser` and `profile`.
+
+`base` overrides the default per-browser data directory. Recent Chromium
+versions store the database at `<profile>/Network/Cookies`, older ones at
+`<profile>/Cookies`; both locations are checked, in that order. Throws an error
+if neither exists.
+"""
 function cookie_db_path(browser::AbstractString; profile = "Default", base = nothing)
     base = base === nothing ? DB_PATH[browser] : base
     for cand in ("$base/$profile/Network/Cookies", "$base/$profile/Cookies")
@@ -107,7 +158,17 @@ end
 # Decrypt Cookies
 #
 
-# Copy DB + WAL/SHM so an un-checkpointed WAL is still read consistently
+"""
+    snapshot(dbpath) -> String
+
+Copy the cookie database at `dbpath`, together with its `-wal` and `-shm`
+sidecar files if present, into a fresh temporary directory and return the path
+to the copy.
+
+Copying the write-ahead log alongside the database ensures cookies that have not
+yet been checkpointed are still read, and avoids touching (or locking) the live
+database the browser is using.
+"""
 function snapshot(dbpath::AbstractString)
     dest = joinpath(mktempdir(), "Cookies")
     cp(dbpath, dest; force = true)
@@ -117,10 +178,45 @@ function snapshot(dbpath::AbstractString)
     return dest
 end
 
+"""
+    strip_pkcs7(d)
+
+Remove PKCS#7 padding from the decrypted byte vector `d`, returning `d`
+unchanged if the trailing padding length is not a valid value in `1:16`.
+"""
 strip_pkcs7(d) = (isempty(d) ? d : (p = Int(d[end]); (1 <= p <= 16 && p <= length(d)) ? d[1:end-p] : d))
+
+"""
+    tobool(x) -> Bool
+
+Coerce a SQLite column value to `Bool`, treating a `missing` (NULL) value as
+`false`.
+"""
 tobool(x) = x === missing ? false : Bool(x)  # some columns can be NULL
+
+"""
+    sha256_bytes(data) -> Vector{UInt8}
+
+Return the raw SHA-256 digest of `data` as bytes.
+"""
 sha256_bytes(data) = (h = Hasher("sha256"); update!(h, data); digest!(h)) # Alternatively: `using SHA`
 
+"""
+    decrypt_value(enc, plainval, host_key, keys) -> String
+
+Decrypt a single cookie's stored value.
+
+`enc` is the raw `encrypted_value` blob and `plainval` the legacy plaintext
+`value` column; `host_key` is the cookie's host, and `keys` the named tuple of
+derivation keys from `derive_keys`.
+
+When `enc` is empty the plaintext `plainval` is returned. Otherwise the leading
+version tag (`v10` or `v11`) selects the key, and the remaining bytes are
+decrypted with AES-128-CBC and PKCS#7-unpadded. Chromium (v104+) prefixes the
+plaintext with the SHA-256 of the host key; that prefix is stripped when present.
+Returns an empty string if the required key is unavailable or the ciphertext is
+malformed.
+"""
 function decrypt_value(enc, plainval, host_key, keys)
     (enc === missing || isempty(enc)) && return plainval === missing ? "" : String(plainval)
     enc = Vector{UInt8}(enc)
@@ -138,8 +234,37 @@ function decrypt_value(enc, plainval, host_key, keys)
 end
 
 
+"""
+    chrome_time(x) -> Union{DateTime, Nothing}
+
+Convert a Chromium timestamp `x` (microseconds since 1601-01-01 UTC) to a
+`DateTime`, returning `nothing` for a `missing` or zero value (e.g. a session
+cookie with no expiry).
+"""
 chrome_time(x) = (x === missing || x == 0) ? nothing : Dates.unix2datetime(x / 1_000_000 - 11_644_473_600)
 
+"""
+    read_cookies(browser = "chrome"; profile = "Default", domain = nothing,
+                 base = nothing, keys = nothing) -> Vector{NamedTuple}
+
+Read and decrypt the cookies stored by `browser` (`"chrome"`, `"chromium"`, or
+`"brave"`, case-insensitive).
+
+Each returned element is a named tuple with fields `host`, `name`, `path`,
+`value` (decrypted), `expires` (a `DateTime` or `nothing`), `secure`, and
+`httponly`.
+
+# Keyword arguments
+- `profile`: the browser profile to read (default `"Default"`).
+- `domain`: if given, only cookies whose host contains this substring are
+  returned.
+- `base`: override for the browser's data directory (see `cookie_db_path`).
+- `keys`: precomputed decryption keys (see `derive_keys`); derived automatically
+  when omitted, which may prompt for keyring access.
+
+The live database is snapshotted before reading (see `snapshot`), so the browser
+need not be closed.
+"""
 function read_cookies(browser::AbstractString = "chrome"; profile = "Default",
                       domain = nothing, base = nothing, keys = nothing)
     browser = lowercase(browser)
