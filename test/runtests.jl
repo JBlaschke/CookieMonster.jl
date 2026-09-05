@@ -220,4 +220,51 @@ const TESTKEYS = (v10 = TESTKEY, v11 = nothing)
         @test plain_row.httponly === true
     end
 
+    # Drive the real read_cookies function end to end, but inject the key and
+    # point `base` at a throwaway profile on disk, so no OS keychain or real
+    # browser install is needed. This exercises snapshot + cookie_db_path (the
+    # Network/Cookies layout) + the SQL query + domain filter + decryption.
+    @testset "read_cookies (injected keys + base)" begin
+        base = mktempdir()
+        profdir = joinpath(base, "Default", "Network")
+        mkpath(profdir)
+        db = SQLite.DB(joinpath(profdir, "Cookies"))
+        DBInterface.execute(db, """
+            CREATE TABLE cookies (
+                host_key TEXT, name TEXT, path TEXT, value TEXT,
+                encrypted_value BLOB, expires_utc INTEGER,
+                is_secure INTEGER, is_httponly INTEGER)""")
+        ins = "INSERT INTO cookies VALUES (?,?,?,?,?,?,?,?)"
+        DBInterface.execute(db, ins,
+            ("example.com", "sid", "/", "",
+             make_encrypted(TESTKEY, "topsecret"; host = "example.com", with_host_prefix = true),
+             13_253_932_800_000_000, 1, missing))
+        DBInterface.execute(db, ins,
+            ("plain.com", "pref", "/app", "lightmode", UInt8[], 0, 0, 1))
+        DBInterface.close!(db)  # flush to disk before reading
+
+        all = read_cookies("chrome"; base = base, keys = TESTKEYS)
+        @test length(all) == 2
+
+        enc = only(filter(c -> c.name == "sid", all))
+        @test enc.host == "example.com"
+        @test enc.value == "topsecret"          # decrypted + host prefix stripped
+        @test enc.expires == DateTime(2021, 1, 1)
+        @test enc.secure === true
+        @test enc.httponly === false            # NULL -> false
+
+        plain = only(filter(c -> c.name == "pref", all))
+        @test plain.value == "lightmode"        # plaintext passthrough
+        @test plain.expires === nothing
+
+        # The domain filter narrows the SQL query (host_key LIKE %domain%).
+        just_example = read_cookies("chrome"; base = base, keys = TESTKEYS, domain = "example.com")
+        @test length(just_example) == 1
+        @test only(just_example).host == "example.com"
+    end
+
 end
+
+# Opt-in, Linux-only end-to-end test against a real browser (see test/e2e.jl).
+# Skipped unless COOKIEMONSTER_E2E=1, so a plain `Pkg.test()` needs no browser.
+include("e2e.jl")

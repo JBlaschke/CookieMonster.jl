@@ -92,8 +92,8 @@ function derive_keys(browser::AbstractString)
     end
 end
 
-function cookie_db_path(browser::AbstractString; profile = "Default")
-    base = DB_PATH[browser]
+function cookie_db_path(browser::AbstractString; profile = "Default", base = nothing)
+    base = base === nothing ? DB_PATH[browser] : base
     for cand in ("$base/$profile/Network/Cookies", "$base/$profile/Cookies")
         isfile(cand) && return cand
     end
@@ -140,10 +140,11 @@ end
 
 chrome_time(x) = (x === missing || x == 0) ? nothing : Dates.unix2datetime(x / 1_000_000 - 11_644_473_600)
 
-function read_cookies(browser::AbstractString = "chrome"; profile = "Default", domain = nothing)
+function read_cookies(browser::AbstractString = "chrome"; profile = "Default",
+                      domain = nothing, base = nothing, keys = nothing)
     browser = lowercase(browser)
-    keys = derive_keys(browser)
-    db = SQLite.DB(snapshot(cookie_db_path(browser; profile = profile)))
+    keys = keys === nothing ? derive_keys(browser) : keys
+    db = SQLite.DB(snapshot(cookie_db_path(browser; profile = profile, base = base)))
     sql = "SELECT host_key, name, path, value, encrypted_value, expires_utc, is_secure, is_httponly FROM cookies"
     q = domain === nothing ?
         DBInterface.execute(db, sql) :
