@@ -436,6 +436,71 @@ const TESTKEYS = (v10 = TESTKEY, v11 = nothing)
                           read_cookies("chrome"; base = base, keys = TESTKEYS))).value == "v"
     end
 
+    # Batch writes: mixed item shapes, one backup, one atomic transaction.
+    @testset "write_cookies (batch, one transaction)" begin
+        # A realistic multi-column schema, created fresh per profile directory.
+        schema = """
+            CREATE TABLE cookies (
+                creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
+                top_frame_site_key TEXT NOT NULL, name TEXT NOT NULL,
+                value TEXT NOT NULL, encrypted_value BLOB NOT NULL,
+                path TEXT NOT NULL, expires_utc INTEGER NOT NULL,
+                is_secure INTEGER NOT NULL, is_httponly INTEGER NOT NULL,
+                last_access_utc INTEGER NOT NULL, has_expires INTEGER NOT NULL,
+                is_persistent INTEGER NOT NULL, priority INTEGER NOT NULL,
+                samesite INTEGER NOT NULL, source_scheme INTEGER NOT NULL,
+                source_port INTEGER NOT NULL, last_update_utc INTEGER NOT NULL,
+                source_type INTEGER NOT NULL, has_cross_site_ancestor INTEGER NOT NULL,
+                UNIQUE (host_key, top_frame_site_key, name, path, source_scheme, source_port))"""
+        function fresh_base()
+            base = mktempdir()
+            profdir = joinpath(base, "Default", "Network")
+            mkpath(profdir)
+            db = SQLite.DB(joinpath(profdir, "Cookies"))
+            DBInterface.execute(db, schema)
+            DBInterface.close!(db)
+            return base
+        end
+
+        base = fresh_base()
+        dbpath = joinpath(base, "Default", "Network", "Cookies")
+
+        # Mixed item shapes: a full tuple and a bare (host, name, value).
+        batch = [
+            (host = "a.test", name = "one", value = "v1", path = "/",
+             expires = DateTime(2031, 1, 1), secure = true, httponly = false),
+            (host = "b.test", name = "two", value = "v2"),   # bare -> defaults apply
+        ]
+        n = write_cookies("chrome", batch; base = base, keys = TESTKEYS)
+        @test n == 2
+        @test isfile(dbpath * ".cmbak")            # a single backup for the batch
+
+        got = read_cookies("chrome"; base = base, keys = TESTKEYS)
+        @test length(got) == 2
+        one = only(filter(c -> c.name == "one", got))
+        @test one.value == "v1"
+        @test one.expires == DateTime(2031, 1, 1)
+        @test one.secure === true
+        two = only(filter(c -> c.name == "two", got))
+        @test two.value == "v2"
+        @test two.expires === nothing              # bare item -> session cookie
+        @test two.secure === false                 # bare item -> default attributes
+
+        # The tuples from read_cookies round-trip straight back through the batch API.
+        n2 = write_cookies("chrome", got; base = base, keys = TESTKEYS, backup = false)
+        @test n2 == 2
+        @test length(read_cookies("chrome"; base = base, keys = TESTKEYS)) == 2  # replaced, not duplicated
+
+        # Atomicity: a failure partway through rolls back the whole batch, so the
+        # cookie inserted before the bad one does not survive.
+        base2 = fresh_base()
+        @test_throws ErrorException write_cookies("chrome",
+            [(host = "ok.test",  name = "k1", value = "v1"),
+             (host = "bad.test", name = "k2", value = "v2", samesite = :bogus)];
+            base = base2, keys = TESTKEYS, backup = false)
+        @test isempty(read_cookies("chrome"; base = base2, keys = TESTKEYS))
+    end
+
 end
 
 # Opt-in, Linux-only end-to-end tests against a real browser (see test/e2e.jl):

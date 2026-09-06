@@ -14,6 +14,12 @@ CookieMonster = {path = ".."}
 
 [compat]
 Comonicon = "1.0.8"
-CookieMonster = "0.1.0"
+CookieMonster = "0.2.0"
 Dates = "1.11.0"
 PackageCompiler = "2.4.1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

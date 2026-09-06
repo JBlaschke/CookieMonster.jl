@@ -100,6 +100,22 @@ created by at least one prior browser run. See [`write_cookie`](@ref) for the
 full list of keyword arguments (`path`, `samesite`, `scheme`, `host_prefix`,
 `profile`, `base`, `keys`, …).
 
+## Command-line interface
+
+A `cookie` command (built with [Comonicon](https://comonicon.org) and
+PackageCompiler) wraps the library with two subcommands, `read` and `write`:
+
+```bash
+cookie read chrome --domain github.com --json > cookies.json
+cookie write chrome < cookies.json          # install them (on another machine)
+```
+
+`cookie write` reads the JSON array `cookie read --json` emits (from a file with
+`--input`, or standard input), or writes a single cookie from `--host`/`--name`/
+`--value`. As with [`write_cookie`](@ref), quit the browser first; the command
+refuses to write under a running browser unless given `--allow-running`. See
+`cookie write --help` for all options.
+
 ## Supported browsers and platforms
 
 | Browser  | `browser` argument | macOS | Linux |

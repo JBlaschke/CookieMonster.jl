@@ -429,6 +429,119 @@ function build_row(db; provided...)
 end
 
 """
+    _cookie_fields(c, samesite_default) -> NamedTuple
+
+Normalize a cookie-like item to the full field set `write_cookies` needs:
+`host`, `name`, and `value` are required, while `path`, `expires`, `secure`,
+`httponly`, and `samesite` default when the item does not provide them (so a
+bare `(host, name, value)` works, as does a full `read_cookies` tuple).
+"""
+function _cookie_fields(c, samesite_default)
+    field(s, default) = hasproperty(c, s) ? getproperty(c, s) : default
+    return (
+        host = c.host, name = c.name, value = c.value,
+        path = field(:path, "/"), expires = field(:expires, nothing),
+        secure = field(:secure, false), httponly = field(:httponly, false),
+        samesite = field(:samesite, samesite_default),
+    )
+end
+
+"""
+    write_cookies(browser, cookies; kwargs...) -> Int
+
+Encrypt and write many cookies into `browser`'s store in a single transaction,
+returning the number written. `cookies` is any iterable of items exposing at
+least `host`, `name`, and `value` (for example the `NamedTuple`s returned by
+[`read_cookies`](@ref)); the optional fields `path`, `expires`, `secure`,
+`httponly`, and `samesite` default when absent. This is the batch form of
+[`write_cookie`](@ref): the running-browser check and the `<Cookies>.cmbak`
+backup happen once, and either every cookie is written or none is.
+
+Each cookie replaces any existing one with the same `(host, name, path)`.
+
+# Keyword arguments
+- `profile` (`"Default"`), `base` (`nothing`): profile / data directory, as in
+  [`read_cookies`](@ref) and [`cookie_db_path`](@ref).
+- `keys` (`nothing`): precomputed keys (see [`derive_keys`](@ref)); derived
+  automatically when omitted, which may prompt for keyring access.
+- `scheme` (`nothing`): `:v10` or `:v11`; auto-selected when omitted.
+- `host_prefix` (`true`): prepend the host digest (Chromium v104+); see
+  [`encrypt_value`](@ref).
+- `samesite` (`:lax`): default SameSite for items that do not specify one.
+- `allow_running` (`false`): write even if the browser looks like it is running
+  (see [`browser_running`](@ref)).
+- `backup` (`true`): copy the database to `<Cookies>.cmbak` first.
+
+!!! warning "Quit the browser first"
+    The same live-database caveat as [`write_cookie`](@ref) applies.
+"""
+function write_cookies(
+            browser::AbstractString, cookies;
+            profile = "Default", base = nothing, keys = nothing,
+            scheme = nothing, host_prefix = true, samesite = :lax,
+            allow_running = false, backup = true
+        )
+    browser = lowercase(browser)
+    keys = keys === nothing ? derive_keys(browser) : keys
+    scheme = scheme === nothing ? (keys.v11 !== nothing ? :v11 : :v10) : scheme
+
+    if !allow_running && browser_running(browser; base = base)
+        error(
+            "$browser appears to be running; its in-memory cookie store will " *
+            "overwrite a direct database write. Quit $browser, or pass " *
+            "allow_running = true to override."
+        )
+    end
+
+    dbpath = cookie_db_path(browser; profile = profile, base = base)
+    backup && cp(dbpath, dbpath * ".cmbak"; force = true)
+
+    now = datetime2chrome(Dates.now(Dates.UTC))
+    written = 0
+    db = SQLite.DB(dbpath)  # the live database, NOT a snapshot
+    try
+        DBInterface.execute(db, "BEGIN")
+        for item in cookies
+            f = _cookie_fields(item, samesite)
+            enc = encrypt_value(
+                f.value, f.host, keys; scheme = scheme, host_prefix = host_prefix
+            )
+            persistent = f.expires !== nothing
+            row = build_row(db;
+                host_key = f.host, name = f.name, value = "",
+                encrypted_value = enc, path = f.path,
+                expires_utc = datetime2chrome(f.expires),
+                is_secure = Int(f.secure), is_httponly = Int(f.httponly),
+                samesite = samesite_code(f.samesite), priority = 1,
+                has_expires = Int(persistent), is_persistent = Int(persistent),
+                creation_utc = now, last_access_utc = now, last_update_utc = now,
+                source_scheme = f.secure ? 2 : 1, source_port = f.secure ? 443 : 80
+            )
+            isempty(row) && error(
+                "no `cookies` table in $dbpath; has $browser created this profile yet?"
+            )
+            cols = join(first.(row), ", ")
+            qs   = join(fill("?", length(row)), ", ")
+            DBInterface.execute(db,
+                "DELETE FROM cookies WHERE host_key = ? AND name = ? AND path = ?",
+                (f.host, f.name, f.path)
+            )
+            DBInterface.execute(db,
+                "INSERT INTO cookies ($cols) VALUES ($qs)", last.(row)
+            )
+            written += 1
+        end
+        DBInterface.execute(db, "COMMIT")
+    catch
+        try; DBInterface.execute(db, "ROLLBACK"); catch; end
+        rethrow()
+    finally
+        DBInterface.close!(db)
+    end
+    return written
+end
+
+"""
     write_cookie(browser = "chrome"; host, name, value, kwargs...) -> Nothing
     write_cookie(browser, cookie::NamedTuple; kwargs...) -> Nothing
 
@@ -481,59 +594,14 @@ function write_cookie(
             base = nothing, keys = nothing, scheme = nothing,
             host_prefix = true, allow_running = false, backup = true
         )
-    browser = lowercase(browser)
-    keys = keys === nothing ? derive_keys(browser) : keys
-    scheme = scheme === nothing ? (keys.v11 !== nothing ? :v11 : :v10) : scheme
-
-    if !allow_running && browser_running(browser; base = base)
-        error(
-            "$browser appears to be running; its in-memory cookie store will " *
-            "overwrite a direct database write. Quit $browser, or pass " *
-            "allow_running = true to override."
-        )
-    end
-
-    dbpath = cookie_db_path(browser; profile = profile, base = base)
-    backup && cp(dbpath, dbpath * ".cmbak"; force = true)
-
-    enc = encrypt_value(
-        value, host, keys; scheme = scheme, host_prefix = host_prefix
+    write_cookies(
+        browser,
+        ((host = host, name = name, value = value, path = path,
+          expires = expires, secure = secure, httponly = httponly,
+          samesite = samesite),);
+        profile = profile, base = base, keys = keys, scheme = scheme,
+        host_prefix = host_prefix, allow_running = allow_running, backup = backup
     )
-    now = datetime2chrome(Dates.now(Dates.UTC))
-    persistent = expires !== nothing
-
-    db = SQLite.DB(dbpath)  # the live database, NOT a snapshot
-    try
-        row = build_row(db;
-            host_key = host, name = name, value = "", encrypted_value = enc,
-            path = path, expires_utc = datetime2chrome(expires),
-            is_secure = Int(secure), is_httponly = Int(httponly),
-            samesite = samesite_code(samesite), priority = 1,
-            has_expires = Int(persistent), is_persistent = Int(persistent),
-            creation_utc = now, last_access_utc = now, last_update_utc = now,
-            source_scheme = secure ? 2 : 1, source_port = secure ? 443 : 80
-        )
-        isempty(row) && error(
-            "no `cookies` table in $dbpath; has $browser created this profile yet?"
-        )
-
-        cols = join(first.(row), ", ")
-        qs   = join(fill("?", length(row)), ", ")
-        DBInterface.execute(db, "BEGIN")
-        DBInterface.execute(db,
-            "DELETE FROM cookies WHERE host_key = ? AND name = ? AND path = ?",
-            (host, name, path)
-        )
-        DBInterface.execute(db,
-            "INSERT INTO cookies ($cols) VALUES ($qs)", last.(row)
-        )
-        DBInterface.execute(db, "COMMIT")
-    catch
-        try; DBInterface.execute(db, "ROLLBACK"); catch; end
-        rethrow()
-    finally
-        DBInterface.close!(db)
-    end
     return nothing
 end
 
@@ -547,7 +615,7 @@ end
 
 #------------------------------------------------------------------------------
 
-export read_cookies, write_cookie
+export read_cookies, write_cookie, write_cookies
 
 
 end

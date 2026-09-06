@@ -112,6 +112,33 @@ An existing cookie with the same `(host, name, path)` is replaced.
 > first. The target profile must already exist (the browser has run at least
 > once). Only write cookies to your own machine and profiles.
 
+## Command-line interface
+
+CookieMonster also ships a `cookie` command (built with
+[Comonicon](https://comonicon.org) and PackageCompiler; see [`app/`](app)), with
+two subcommands, `read` and `write`:
+
+```bash
+# Read: tab-separated host/name/value, or a JSON array with --json.
+cookie read chrome
+cookie read chrome --domain github.com --json
+
+# Write: install cookies from a JSON array (the same shape `read --json`
+# emits), from a file or standard input. This is the cross-machine path —
+# lift a site's cookies off one computer and install them on another:
+cookie read chrome --domain example.com --json > cookies.json   # machine A
+cookie write chrome < cookies.json                              # machine B
+cookie write chrome --input cookies.json --domain example.com
+
+# Write a single cookie from the command line, no JSON:
+cookie write chrome --host .example.com --name session --value s3cr3t \
+    --secure --httponly --expires 2030-01-01T00:00:00
+```
+
+Quit the browser before writing: `cookie write` refuses when the browser looks
+like it is running (override with `--allow-running`) and backs the database up to
+`<Cookies>.cmbak` first. Run `cookie write --help` for the full option list.
+
 ## Testing
 
 Run the unit tests with:
