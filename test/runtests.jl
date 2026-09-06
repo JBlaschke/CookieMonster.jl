@@ -168,7 +168,7 @@ const TESTKEYS = (v10 = TESTKEY, v11 = nothing)
     end
 
     @testset "cookie_db_path" begin
-        # Unknown browser key -> KeyError from the DB_PATH lookup.
+        # Unknown browser key -> KeyError from the db_path lookup.
         @test_throws KeyError CM.cookie_db_path("firefox")
         # Known browser but a profile that cannot exist -> descriptive error.
         @test_throws ErrorException CM.cookie_db_path("chrome"; profile = "__cookiemonster_no_such_profile__")

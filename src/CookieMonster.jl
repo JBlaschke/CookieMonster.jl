@@ -64,19 +64,11 @@ end
 # Per-platform key derivation, keyring service names, and cookie DB locations.
 #
 
-h = homedir()
-
 if Sys.isapple()
     const SERVICE_TYPE = Dict(
         "chrome"   => "Chrome Safe Storage",
         "chromium" => "Chromium Safe Storage",
         "brave"    => "Brave Safe Storage"
-    )
-
-    const DB_PATH = Dict(
-        "chrome"   => "$h/Library/Application Support/Google/Chrome",
-        "chromium" => "$h/Library/Application Support/Chromium",
-        "brave"    => "$h/Library/Application Support/BraveSoftware/Brave-Browser"
     )
 else
     const SERVICE_TYPE = Dict(
@@ -84,12 +76,31 @@ else
         "chromium" => "chromium",
         "brave"    => "brave"
     )
+end
 
-    const DB_PATH = Dict(
+"""
+    db_path(browser) -> String
+
+Return the default per-browser cookie data directory for `browser`.
+
+`homedir()` is evaluated here, at call time, on purpose: this package ships as
+a PackageCompiler app, and the module body runs at *build* time. Interpolating
+`homedir()` into a top-level `const` would bake the build machine's home
+directory (e.g. `/Users/runner`) into the shipped image. Deferring the call to
+runtime resolves the *invoking* user's home instead.
+"""
+function db_path(browser::AbstractString)
+    h = homedir()
+    paths = Sys.isapple() ? Dict(
+        "chrome"   => "$h/Library/Application Support/Google/Chrome",
+        "chromium" => "$h/Library/Application Support/Chromium",
+        "brave"    => "$h/Library/Application Support/BraveSoftware/Brave-Browser"
+    ) : Dict(
         "chrome"   => "$h/.config/google-chrome",
         "chromium" => "$h/.config/chromium",
         "brave"    => "$h/.config/BraveSoftware/Brave-Browser"
     )
+    return paths[browser]
 end
 
 const LINUX_V10_PW = Vector{UInt8}("peanuts")
@@ -145,7 +156,7 @@ versions store the database at `<profile>/Network/Cookies`, older ones at
 if neither exists.
 """
 function cookie_db_path(browser::AbstractString; profile = "Default", base = nothing)
-    base = base === nothing ? DB_PATH[browser] : base
+    base = base === nothing ? db_path(browser) : base
     for cand in ("$base/$profile/Network/Cookies", "$base/$profile/Cookies")
         isfile(cand) && return cand
     end
@@ -385,7 +396,7 @@ used only to steer `write_cookie` away from the common footgun of writing under
 a live browser.
 """
 function browser_running(browser::AbstractString; base = nothing)
-    base = base === nothing ? DB_PATH[lowercase(browser)] : base
+    base = base === nothing ? db_path(lowercase(browser)) : base
     lock = joinpath(base, "SingletonLock")
     return ispath(lock) || islink(lock)  # the marker is a (sometimes dangling) symlink
 end
