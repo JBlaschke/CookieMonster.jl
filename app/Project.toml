@@ -6,6 +6,7 @@ authors = ["Johannes Blaschke <johannes.blaschke@gmail.com>"]
 [deps]
 Comonicon = "863f3e99-da2a-4334-8734-de3dacbe5542"
 CookieMonster = "75086921-2357-4d64-a344-adda719f636f"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
 
 [sources]
@@ -14,4 +15,5 @@ CookieMonster = {path = ".."}
 [compat]
 Comonicon = "1.0.8"
 CookieMonster = "0.1.0"
+Dates = "1.11.0"
 PackageCompiler = "2.4.1"
