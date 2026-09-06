@@ -3,5 +3,6 @@
 /docs/build/
 
 # PackageCompiler / Comonicon build outputs (large, machine-specific)
+/app/Manifest.toml
 /app/build/
 /app/CookieCompiled/
