@@ -1,6 +1,6 @@
 name = "Cookie"
 uuid = "291bb7ab-538b-46af-bbed-0b035f7a2950"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Johannes Blaschke <johannes.blaschke@gmail.com>"]
 
 [deps]

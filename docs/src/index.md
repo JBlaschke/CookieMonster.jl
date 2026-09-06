@@ -4,8 +4,9 @@ CurrentModule = CookieMonster
 
 # CookieMonster.jl
 
-Read and decrypt cookies from Chromium-based browsers — Google Chrome, Chromium,
-and Brave — on macOS and Linux, directly from the browser's on-disk cookie store.
+Read, decrypt, and write cookies for Chromium-based browsers — Google Chrome,
+Chromium, and Brave — on macOS and Linux, directly from the browser's on-disk
+cookie store.
 
 Each browser keeps its cookies in an SQLite database whose values are encrypted
 with AES-128-CBC. The key is derived (via PBKDF2-HMAC-SHA1) from a per-browser
@@ -57,6 +58,47 @@ Each element is a `NamedTuple` with the following fields:
 | `expires`  | `DateTime` or `nothing`   | Expiry, or `nothing` for a session cookie.    |
 | `secure`   | `Bool`                    | `Secure` attribute.                           |
 | `httponly` | `Bool`                    | `HttpOnly` attribute.                         |
+
+## Writing cookies
+
+[`write_cookie`](@ref) is the inverse of `read_cookies`: it encrypts a value
+exactly the way the browser does and inserts a fully-formed row into the cookie
+store.
+
+```julia
+using CookieMonster, Dates
+
+write_cookie("chrome";
+    host     = ".example.com",
+    name     = "session",
+    value    = "s3cr3t-token",
+    expires  = now(UTC) + Year(1),   # omit for a session cookie
+    secure   = true,
+    httponly = true,
+)
+```
+
+Because `read_cookies` returns `NamedTuple`s, a cookie can be read, modified, and
+written back — the second form of `write_cookie` takes such a tuple, and keyword
+arguments override its fields:
+
+```julia
+c = only(read_cookies("chrome"; domain = "example.com"))
+write_cookie("chrome", c; value = "rotated-token")
+```
+
+!!! warning "Quit the browser before writing"
+    Chromium keeps its cookies in an in-memory store and flushes them through to
+    SQLite, so writing to the live database while the browser is open is
+    unreliable — the write can be lost or clobbered. By default `write_cookie`
+    refuses when it detects the browser running (see [`browser_running`](@ref));
+    it also backs the database up to `<Cookies>.cmbak` first. An existing cookie
+    with the same `(host, name, path)` is replaced.
+
+The `cookies` table must already exist, so the target profile must have been
+created by at least one prior browser run. See [`write_cookie`](@ref) for the
+full list of keyword arguments (`path`, `samesite`, `scheme`, `host_prefix`,
+`profile`, `base`, `keys`, …).
 
 ## Supported browsers and platforms
 
