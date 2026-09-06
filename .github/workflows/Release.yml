@@ -42,7 +42,9 @@ jobs:
 
       - uses: julia-actions/setup-julia@v3
         with:
-          version: '1.10'         # LTS; the built binary bundles this runtime
+          version: '1.12'         # >= 1.11 required: app/Project.toml uses [sources]
+                                  # (path dep on CookieMonster), which 1.10 ignores.
+                                  # The built binary bundles this runtime.
           arch: ${{ matrix.arch }}
 
       - uses: julia-actions/cache@v3
