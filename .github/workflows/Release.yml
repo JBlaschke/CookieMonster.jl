@@ -1,0 +1,81 @@
+name: Release
+
+# Build the standalone `cookie` CLI (PackageCompiler via Comonicon) for macOS
+# and Linux, and attach the tarballs to a GitHub Release.
+#
+# Triggers on any `v*` tag (this is also what TagBot pushes when you register a
+# new version), or manually via the Actions tab. On a manual run the binaries
+# are still built and uploaded as workflow artifacts, but no Release is created.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create the Release and upload assets
+  actions: write    # let julia-actions/cache prune its own caches
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            asset: linux-x86_64
+          - os: ubuntu-24.04-arm  # GitHub-hosted arm64 Linux
+            arch: aarch64
+            asset: linux-aarch64
+          - os: macos-latest      # Apple Silicon
+            arch: aarch64
+            asset: macos-aarch64
+          - os: macos-13          # Intel
+            arch: x64
+            asset: macos-x86_64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1.10'         # LTS; the built binary bundles this runtime
+          arch: ${{ matrix.arch }}
+
+      - uses: julia-actions/cache@v3
+
+      # Resolve/download the app project's dependencies (CookieMonster is picked
+      # up from the repo root via the [sources] entry in app/Project.toml).
+      - name: Instantiate app project
+        working-directory: app
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      # `deps/build.jl app` dispatches to Comonicon's builder, which calls
+      # PackageCompiler.create_app and writes the relocatable app to build/cookie.
+      - name: Build standalone app
+        working-directory: app
+        run: julia --project=. deps/build.jl app
+
+      - name: Package tarball
+        run: |
+          tar -czf "cookie-${{ matrix.asset }}.tar.gz" -C app/build cookie
+          shasum -a 256 "cookie-${{ matrix.asset }}.tar.gz" > "cookie-${{ matrix.asset }}.tar.gz.sha256"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cookie-${{ matrix.asset }}
+          path: |
+            cookie-${{ matrix.asset }}.tar.gz
+            cookie-${{ matrix.asset }}.tar.gz.sha256
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            cookie-${{ matrix.asset }}.tar.gz
+            cookie-${{ matrix.asset }}.tar.gz.sha256

@@ -54,27 +54,38 @@ with sync_playwright() as p:
     else
         py = Sys.which("python3")
         py === nothing && (py = Sys.which("python"))
-        py === nothing && error("COOKIEMONSTER_E2E=1 but neither python3 nor python is on PATH")
+        py === nothing && error(
+            "COOKIEMONSTER_E2E=1 but neither python3 nor python is on PATH"
+        )
 
         user_data_dir = mktempdir()
         script = joinpath(mktempdir(), "set_cookie.py")
         write(script, E2E_PYSCRIPT)
 
-        # Run the browser driver; surface stderr if it fails (e.g. Playwright or
-        # Chromium not installed) instead of a cryptic nonzero-exit error.
+        # Run the browser driver; surface stderr if it fails (e.g. Playwright
+        # or Chromium not installed) instead of a cryptic nonzero-exit error.
         err = IOBuffer()
-        proc = run(pipeline(ignorestatus(`$py $script $user_data_dir`);
-                            stdout = devnull, stderr = err))
+        proc = run(
+            pipeline(
+                ignorestatus(`$py $script $user_data_dir`);
+                stdout = devnull,
+                stderr = err
+            )
+        )
         proc.exitcode == 0 ||
             error("Playwright driver failed (exit $(proc.exitcode)):\n" * String(take!(err)))
 
         # Real key derivation (Linux peanuts v10) + real on-disk profile.
-        cookies = read_cookies("chromium"; base = user_data_dir, profile = "Default",
-                               domain = "cookiemonster")
+        cookies = read_cookies(
+            "chromium";
+            base = user_data_dir,
+            profile = "Default",
+            domain = "cookiemonster"
+        )
         matches = filter(c -> c.name == "cm_e2e", cookies)
         @test length(matches) == 1
         c = only(matches)
-        @test c.value == "monster_nomnom_42"        # decrypted through the full real pipeline
+        @test c.value == "monster_nomnom_42"  # decrypted through the full real pipeline
         @test occursin("cookiemonster.test", c.host)
         @test c.secure === true
         @test c.httponly === true
