@@ -207,6 +207,19 @@ Coerce a SQLite column value to `Bool`, treating a `missing` (NULL) value as
 tobool(x) = x === missing ? false : Bool(x)  # some columns can be NULL
 
 """
+    samesite_name(x) -> String
+
+Map the integer SameSite code Chromium stores in the `samesite` column to a
+canonical lowercase name: `0 => "none"`, `1 => "lax"`, `2 => "strict"`, and
+`-1`, `missing` (a NULL column, or a schema with no `samesite` at all), or any
+unknown code => `"unspecified"`. Inverse of [`samesite_code`](@ref); together
+they let a cookie's SameSite attribute survive a read/write round-trip instead
+of being reset to a default.
+"""
+samesite_name(x) = x === missing ? "unspecified" :
+    x == 0 ? "none" : x == 1 ? "lax" : x == 2 ? "strict" : "unspecified"
+
+"""
     sha256_bytes(data) -> Vector{UInt8}
 
 Return the raw SHA-256 digest of `data` as bytes.
@@ -263,8 +276,8 @@ Read and decrypt the cookies stored by `browser` (`"chrome"`, `"chromium"`, or
 `"brave"`, case-insensitive).
 
 Each returned element is a named tuple with fields `host`, `name`, `path`,
-`value` (decrypted), `expires` (a `DateTime` or `nothing`), `secure`, and
-`httponly`.
+`value` (decrypted), `expires` (a `DateTime` or `nothing`), `secure`,
+`httponly`, and `samesite` (`"none"`, `"lax"`, `"strict"`, or `"unspecified"`).
 
 # Keyword arguments
 - `profile`: the browser profile to read (default `"Default"`).
@@ -285,7 +298,14 @@ function read_cookies(
     browser = lowercase(browser)
     keys = keys === nothing ? derive_keys(browser) : keys
     db = SQLite.DB(snapshot(cookie_db_path(browser; profile = profile, base = base)))
-    sql = "SELECT host_key, name, path, value, encrypted_value, expires_utc, is_secure, is_httponly FROM cookies"
+    # `samesite` has been a column since Chrome 51, but introspect for it rather
+    # than assume it (mirroring how `build_row` tolerates schema drift on write):
+    # a synthetic or very old DB without the column still reads, as "unspecified".
+    has_ss = any(c -> c.name == "samesite",
+                 DBInterface.execute(db, "PRAGMA table_info(cookies)"))
+    cols = "host_key, name, path, value, encrypted_value, expires_utc, " *
+           "is_secure, is_httponly" * (has_ss ? ", samesite" : "")
+    sql = "SELECT $cols FROM cookies"
     q = domain === nothing ? DBInterface.execute(db, sql) :
         DBInterface.execute(db, sql * " WHERE host_key LIKE ?", ("%$domain%",))
     out = NamedTuple[]
@@ -294,7 +314,8 @@ function read_cookies(
             host = r.host_key, name = r.name, path = r.path,
             value = decrypt_value(r.encrypted_value, r.value, r.host_key, keys),
             expires = chrome_time(r.expires_utc),
-            secure = tobool(r.is_secure), httponly = tobool(r.is_httponly)
+            secure = tobool(r.is_secure), httponly = tobool(r.is_httponly),
+            samesite = samesite_name(has_ss ? r.samesite : missing),
         ))
     end
     return out
@@ -377,13 +398,15 @@ end
 
 Map a SameSite value to the integer Chromium stores in the `samesite` column:
 `:unspecified => -1`, `:none => 0`, `:lax => 1`, `:strict => 2`. An integer is
-passed through unchanged.
+passed through unchanged, and a string name (as [`read_cookies`](@ref) /
+[`samesite_name`](@ref) emit, case-insensitive) is accepted too.
 """
 samesite_code(n::Integer) = Int(n)
 samesite_code(s::Symbol) =
     s === :unspecified ? -1 : s === :none ? 0 :
     s === :lax ? 1 : s === :strict ? 2 :
     error("bad samesite $(repr(s)); use :unspecified/:none/:lax/:strict")
+samesite_code(s::AbstractString) = samesite_code(Symbol(lowercase(s)))
 
 """
     browser_running(browser; base = nothing) -> Bool
@@ -621,6 +644,9 @@ function write_cookie(browser::AbstractString, c::NamedTuple; kwargs...)
         host = c.host, name = c.name, value = c.value, path = c.path,
         expires = c.expires, secure = c.secure, httponly = c.httponly
     )
+    # Carry SameSite through when the tuple has it (a read_cookies result does),
+    # so a read/modify/write keeps it instead of falling back to the :lax default.
+    hasproperty(c, :samesite) && (fields = merge(fields, (samesite = c.samesite,)))
     return write_cookie(browser; merge(fields, values(kwargs))...)
 end
 

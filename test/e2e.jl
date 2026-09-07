@@ -70,9 +70,10 @@ with sync_playwright() as p:
         args=["--password-store=basic", "--no-sandbox", "--disable-dev-shm-usage"],
     )
     for c in ctx.cookies():
-        print("COOKIE\t%s\t%s\t%s\t%s\t%s" % (
+        print("COOKIE\t%s\t%s\t%s\t%s\t%s\t%s" % (
             c["name"], c["value"], c["domain"],
-            c.get("secure", False), c.get("httpOnly", False)))
+            c.get("secure", False), c.get("httpOnly", False),
+            c.get("sameSite", "")))
     ctx.close()
 """
 
@@ -104,9 +105,10 @@ function e2e_parse(dump)
     cookies = NamedTuple[]
     for line in split(dump, '\n')
         startswith(line, "COOKIE\t") || continue
-        _, name, value, domain, secure, httponly = split(line, '\t')
+        _, name, value, domain, secure, httponly, samesite = split(line, '\t')
         push!(cookies, (name = name, value = value, domain = domain,
-                        secure = secure == "True", httponly = httponly == "True"))
+                        secure = secure == "True", httponly = httponly == "True",
+                        samesite = samesite))
     end
     return cookies
 end
@@ -136,6 +138,7 @@ end
         @test occursin("cookiemonster.test", c.host)
         @test c.secure === true
         @test c.httponly === true
+        @test c.samesite == "lax"              # the browser set SameSite=Lax; read it back
     end
 end
 
@@ -154,7 +157,10 @@ end
             host = "cookiemonster.test", name = "cm_write",
             value = "written_by_cm_99",
             expires = Dates.now(Dates.UTC) + Dates.Year(1),
-            secure = true, httponly = true, samesite = :lax,
+            # SameSite=None (needs Secure) is the case that matters for cross-site
+            # SSO replay and the one a Lax-downgrade bug would break; prove the
+            # real browser accepts and reports it as None.
+            secure = true, httponly = true, samesite = :none,
             allow_running = true,   # profile is closed; skip the lingering-lock heuristic
             backup = false)
 
@@ -168,6 +174,7 @@ end
         @test occursin("cookiemonster.test", w.domain)
         @test w.secure === true
         @test w.httponly === true
+        @test w.samesite == "None"                 # SameSite=None survived CM -> browser
 
         # The browser-written cookie is still there: our write replaced nothing else.
         seeded = filter(c -> c.name == "cm_e2e", dumped)

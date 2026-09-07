@@ -319,6 +319,26 @@ const TESTKEYS = (v10 = TESTKEY, v11 = nothing)
         @test CM.samesite_code(:strict) == 2
         @test CM.samesite_code(2) == 2                              # integer passthrough
         @test_throws ErrorException CM.samesite_code(:bogus)
+        # String names (as read_cookies emits) are accepted, case-insensitively.
+        @test CM.samesite_code("none") == 0
+        @test CM.samesite_code("Lax") == 1
+        @test CM.samesite_code("STRICT") == 2
+        @test CM.samesite_code("unspecified") == -1
+        @test_throws ErrorException CM.samesite_code("bogus")
+    end
+
+    @testset "samesite_name" begin
+        @test CM.samesite_name(0) == "none"
+        @test CM.samesite_name(1) == "lax"
+        @test CM.samesite_name(2) == "strict"
+        @test CM.samesite_name(-1) == "unspecified"
+        @test CM.samesite_name(missing) == "unspecified"           # NULL / absent column
+        @test CM.samesite_name(99) == "unspecified"                # unknown code
+        # Inverse of samesite_code across the canonical names.
+        for s in (:none, :lax, :strict, :unspecified)
+            @test CM.samesite_name(CM.samesite_code(s)) == String(s)
+            @test CM.samesite_code(CM.samesite_name(CM.samesite_code(s))) == CM.samesite_code(s)
+        end
     end
 
     @testset "zero_for" begin
@@ -434,6 +454,53 @@ const TESTKEYS = (v10 = TESTKEY, v11 = nothing)
             allow_running = true, host = "x.test", name = "n", value = "v")
         @test only(filter(c -> c.name == "n",
                           read_cookies("chrome"; base = base, keys = TESTKEYS))).value == "v"
+    end
+
+    # SameSite must survive a write -> read -> write round-trip: a cookie whose
+    # original SameSite=None is silently downgraded to Lax may not be sent in the
+    # cross-site redirects an SSO login depends on, so this is a correctness bug,
+    # not cosmetics.
+    @testset "samesite round-trip (write -> read -> write)" begin
+        base = mktempdir()
+        profdir = joinpath(base, "Default", "Network")
+        mkpath(profdir)
+        db = SQLite.DB(joinpath(profdir, "Cookies"))
+        DBInterface.execute(db, """
+            CREATE TABLE cookies (
+                creation_utc INTEGER NOT NULL, host_key TEXT NOT NULL,
+                top_frame_site_key TEXT NOT NULL, name TEXT NOT NULL,
+                value TEXT NOT NULL, encrypted_value BLOB NOT NULL,
+                path TEXT NOT NULL, expires_utc INTEGER NOT NULL,
+                is_secure INTEGER NOT NULL, is_httponly INTEGER NOT NULL,
+                last_access_utc INTEGER NOT NULL, has_expires INTEGER NOT NULL,
+                is_persistent INTEGER NOT NULL, priority INTEGER NOT NULL,
+                samesite INTEGER NOT NULL, source_scheme INTEGER NOT NULL,
+                source_port INTEGER NOT NULL, last_update_utc INTEGER NOT NULL,
+                source_type INTEGER NOT NULL, has_cross_site_ancestor INTEGER NOT NULL,
+                UNIQUE (host_key, top_frame_site_key, name, path, source_scheme, source_port))""")
+        DBInterface.close!(db)
+
+        # One cookie per SameSite value; read must report the matching name.
+        for nm in ("none", "lax", "strict", "unspecified")
+            write_cookie("chrome"; base = base, keys = TESTKEYS, backup = false,
+                allow_running = true, host = "ss.test", name = nm, value = "v",
+                samesite = Symbol(nm))
+        end
+        got = read_cookies("chrome"; base = base, keys = TESTKEYS)
+        for nm in ("none", "lax", "strict", "unspecified")
+            @test only(filter(c -> c.name == nm, got)).samesite == nm
+        end
+
+        # The read tuple carries samesite back through the NamedTuple write path,
+        # so a read/modify/write does not reset SameSite=None to Lax.
+        none = only(filter(c -> c.name == "none", got))
+        @test none.samesite == "none"
+        write_cookie("chrome", merge(none, (value = "again",));
+                     base = base, keys = TESTKEYS, backup = false, allow_running = true)
+        back = only(filter(c -> c.name == "none",
+                           read_cookies("chrome"; base = base, keys = TESTKEYS)))
+        @test back.samesite == "none"
+        @test back.value == "again"
     end
 
     # Batch writes: mixed item shapes, one backup, one atomic transaction.

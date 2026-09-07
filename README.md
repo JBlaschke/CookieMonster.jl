@@ -49,6 +49,7 @@ c.value     # decrypted value (String)
 c.expires   # DateTime, or nothing for a session cookie
 c.secure    # Bool
 c.httponly  # Bool
+c.samesite  # "none", "lax", "strict", or "unspecified"
 ```
 
 `read_cookies` takes the browser name as its first argument (`"chrome"`,

@@ -58,22 +58,27 @@ json_scalar(io::IO, t::DateTime)      = (print(io, '"'); print(io, t); print(io,
 
 Write `cookies` (as returned by `read_cookies`) to `io` as a JSON array, one
 object per line, with the fields `host`, `name`, `path`, `value`, `expires`
-(an ISO 8601 UTC string, or `null` for a session cookie), `secure`, and
-`httponly`.
+(an ISO 8601 UTC string, or `null` for a session cookie), `secure`, `httponly`,
+and `samesite` (`"none"`/`"lax"`/`"strict"`/`"unspecified"`). Carrying
+`samesite` matters for the cross-machine path: a cookie whose original
+`SameSite=None` is silently rewritten to `Lax` may not be sent in the
+cross-site redirects an SSO login relies on.
 """
 function print_json(io::IO, cookies)
     println(io, "[")
     n = length(cookies)
     for (i, c) in enumerate(cookies)
+        ss = hasproperty(c, :samesite) ? c.samesite : "unspecified"
         print(io, "  {")
         for (key, val) in (
                     ("host", c.host), ("name", c.name), ("path", c.path),
                     ("value", c.value), ("expires", c.expires),
-                    ("secure", c.secure), ("httponly", c.httponly)
+                    ("secure", c.secure), ("httponly", c.httponly),
+                    ("samesite", ss)
                 )
             print(io, '"', key, "\": ")
             json_scalar(io, val)
-            key == "httponly" || print(io, ", ")
+            key == "samesite" || print(io, ", ")
         end
         println(io, i < n ? "}," : "}")
     end
@@ -298,12 +303,26 @@ function parse_expires_field(x)
 end
 
 """
+    parse_samesite_field(x) -> Union{String, Int}
+
+Interpret a JSON `samesite` value into something `write_cookies` accepts: a name
+string (`"none"`/`"lax"`/`"strict"`/`"unspecified"`, as `cookie read --json`
+emits — case is ignored downstream) is passed through, as is the integer code
+(`-1`..`2`) some other dumps store. `null` maps to `"unspecified"`.
+"""
+parse_samesite_field(::Nothing)          = "unspecified"
+parse_samesite_field(x::Integer)         = Int(x)
+parse_samesite_field(x::AbstractString)  = String(x)
+parse_samesite_field(x)                  = throw(JSONError("invalid samesite value $(repr(x))"))
+
+"""
     cookies_from_json(text) -> Vector{NamedTuple}
 
 Parse `text` (a JSON array of cookie objects, as produced by `cookie read
 --json`) into cookie NamedTuples suitable for `write_cookies`. Requires `host`,
-`name`, and `value` on each object; `path`, `expires`, `secure`, and `httponly`
-default when absent.
+`name`, and `value` on each object; `path`, `expires`, `secure`, `httponly`, and
+`samesite` default when absent (`samesite` to `"lax"`, preserving the previous
+write default for dumps that omit it).
 """
 function cookies_from_json(text::AbstractString)
     v = parse_json(text)
@@ -321,6 +340,7 @@ function cookies_from_json(text::AbstractString)
             expires  = parse_expires_field(get(item, "expires", nothing)),
             secure   = get(item, "secure", false) === true,
             httponly = get(item, "httponly", false) === true,
+            samesite = parse_samesite_field(get(item, "samesite", "lax")),
         ))
     end
     return out
@@ -353,7 +373,7 @@ Read and decrypt cookies from a Chromium-based browser.
 # Flags
 
 - `--json`: emit a JSON array (host, name, path, value, expires, secure,
-  httponly) instead of the default tab-separated host/name/value.
+  httponly, samesite) instead of the default tab-separated host/name/value.
 """
 @cast function read(
             browser::String = "chrome";

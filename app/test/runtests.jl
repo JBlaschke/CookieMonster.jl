@@ -75,11 +75,20 @@ using .Cookie
         @test Cookie.parse_expires_opt("2030-06-15T12:00:00") == DateTime(2030, 6, 15, 12)
     end
 
+    @testset "parse_samesite_field" begin
+        @test Cookie.parse_samesite_field("none") == "none"
+        @test Cookie.parse_samesite_field("Strict") == "Strict"   # name passed through
+        @test Cookie.parse_samesite_field(nothing) == "unspecified"
+        @test Cookie.parse_samesite_field(2) === 2                # integer code passed through
+        @test_throws Cookie.JSONError Cookie.parse_samesite_field([1])
+    end
+
     @testset "cookies_from_json" begin
         json = """
         [
           {"host": ".x.com", "name": "sid", "path": "/", "value": "abc",
-           "expires": "2030-01-01T00:00:00Z", "secure": true, "httponly": true},
+           "expires": "2030-01-01T00:00:00Z", "secure": true, "httponly": true,
+           "samesite": "none"},
           {"host": "y.com", "name": "p", "value": "v"}
         ]
         """
@@ -89,9 +98,11 @@ using .Cookie
         @test cs[1].value == "abc"
         @test cs[1].expires == DateTime(2030, 1, 1)
         @test cs[1].secure && cs[1].httponly
+        @test cs[1].samesite == "none"      # parsed, not dropped
         @test cs[2].path == "/"             # default
         @test cs[2].expires === nothing     # default (session)
         @test cs[2].secure === false        # default
+        @test cs[2].samesite == "lax"       # default when absent
 
         # Errors: not an array, element not an object, missing required field.
         @test_throws Cookie.JSONError Cookie.cookies_from_json("{}")
@@ -104,10 +115,11 @@ using .Cookie
     @testset "print_json / cookies_from_json round-trip" begin
         cookies = [
             (host = ".a.com", name = "one", path = "/", value = "plain",
-             expires = DateTime(2031, 2, 3, 4, 5, 6), secure = true, httponly = false),
+             expires = DateTime(2031, 2, 3, 4, 5, 6), secure = true, httponly = false,
+             samesite = "strict"),
             (host = "b.org", name = "two", path = "/app",
              value = "quote\" back\\slash\ttab\nnl \u2615 café", expires = nothing,
-             secure = false, httponly = true),
+             secure = false, httponly = true, samesite = "none"),
         ]
         io = IOBuffer(); Cookie.print_json(io, cookies)
         back = Cookie.cookies_from_json(String(take!(io)))
@@ -117,6 +129,7 @@ using .Cookie
             @test a.value == b.value          # every escape survives
             @test a.expires == b.expires
             @test a.secure == b.secure && a.httponly == b.httponly
+            @test a.samesite == b.samesite    # SameSite survives the round-trip
         end
     end
 
