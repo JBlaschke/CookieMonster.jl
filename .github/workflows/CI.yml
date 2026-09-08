@@ -55,6 +55,11 @@ jobs:
   # relies on Chromium's keyring-free "peanuts" v10 store (--password-store=basic).
   # Kept out of the main matrix so a browser/format change can't red-herring the
   # unit tests.
+  #
+  # This job also produces the coverage report: with COOKIEMONSTER_E2E=1 the
+  # test run includes both the unit suite and the browser round-trip, so its
+  # .cov files are the *combined* coverage. One matrix cell aggregates them,
+  # posts a per-file table to the job summary, and fails below the floor.
   e2e:
     name: E2E browser - Julia ${{ matrix.version }}
     runs-on: ubuntu-latest
@@ -87,3 +92,8 @@ jobs:
       - uses: julia-actions/julia-runtest@v1
         env:
           COOKIEMONSTER_E2E: '1'
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.version == '1.10'
+      - name: Coverage summary + gate
+        if: matrix.version == '1.10'
+        run: julia .github/coverage_gate.jl lcov.info 90

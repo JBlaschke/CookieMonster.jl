@@ -6,3 +6,10 @@
 /app/Manifest.toml
 /app/build/
 /app/CookieCompiled/
+
+# Coverage output (see test/coverage.jl and .github/coverage_gate.jl)
+/coverage/
+/lcov.info
+*.jl.cov
+*.jl.*.cov
+*.jl.mem

@@ -116,8 +116,8 @@ An existing cookie with the same `(host, name, path)` is replaced.
 ## Command-line interface
 
 CookieMonster also ships a `cookie` command (built with
-[Comonicon](https://comonicon.org) and PackageCompiler; see [`app/`](app)), with
-two subcommands, `read` and `write`:
+[Comonicon](https://comonicon.org) and PackageCompiler; see [`app/`](app)),
+with two subcommands, `read` and `write`:
 
 ```bash
 # Read: tab-separated host/name/value, or a JSON array with --json.
@@ -137,8 +137,8 @@ cookie write chrome --host .example.com --name session --value s3cr3t \
 ```
 
 Quit the browser before writing: `cookie write` refuses when the browser looks
-like it is running (override with `--allow-running`) and backs the database up to
-`<Cookies>.cmbak` first. Run `cookie write --help` for the full option list.
+like it is running (override with `--allow-running`) and backs the database up
+to `<Cookies>.cmbak` first. Run `cookie write --help` for the full option list.
 
 ## Testing
 
@@ -155,12 +155,33 @@ CookieMonster reads it back and decrypts it. It is skipped unless
 
 ### Running the end-to-end test in a container
 
-Because that test relies on Chromium's Linux "peanuts" key store, a reproducible
-Docker/Podman environment is provided so it can be run cleanly on any host
-(including macOS):
+Because that test relies on Chromium's Linux "peanuts" key store, a
+reproducible Docker/Podman environment is provided so it can be run cleanly on
+any host (including macOS):
 
 ```bash
 ./docker/run-e2e.sh
 ```
 
 See [`docker/README.md`](docker/README.md) for details.
+
+### Coverage
+
+To check test coverage locally (via
+[LocalCoverage.jl](https://github.com/JuliaCI/LocalCoverage.jl)):
+
+```bash
+julia test/coverage.jl          # run the tests, print a per-file summary
+julia test/coverage.jl --html   # ... then build and open an HTML report
+```
+
+The script installs LocalCoverage into a throwaway environment (nothing is
+added to the package's dependencies) and writes the lcov trace to
+`coverage/lcov.info`. The HTML report needs `genhtml` from the lcov package
+(`brew install lcov` on macOS, `apt install lcov` on Debian/Ubuntu).
+
+CI enforces coverage as well: the end-to-end job's test run includes the unit
+suite, so its coverage data is the combined (unit + browser) picture. One cell
+of that job posts a per-file table to the GitHub Actions job summary and fails
+if total line coverage drops below 90% (see
+[`.github/coverage_gate.jl`](.github/coverage_gate.jl)).
