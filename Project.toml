@@ -1,6 +1,6 @@
 name = "CookieMonster"
 uuid = "75086921-2357-4d64-a344-adda719f636f"
-version = "0.2.1"
+version = "0.2.0"
 authors = ["Johannes Blaschke"]
 
 [deps]
